@@ -11,6 +11,8 @@ static int line_num = 0;
 static LexMacro *g_macros = NULL;
 static LexRule *g_rules = NULL;
 
+static int inside_mini_section = 0; // for now only being used for section 1
+
 char *trim(char *str)
 {
     while (isspace((unsigned char)*str)) str++;
@@ -24,7 +26,6 @@ char *trim(char *str)
 
 LexMacro *parse_macro_line(const char *line)
 {
-    static int inside_mini_section = 0;
     char *buf = strdup(line);
     if (!buf) return NULL;
     char *trimmed = trim(buf);
@@ -123,6 +124,11 @@ int lex_parser(char* filename)
             if ((*trimmed == '\0') || (strcmp(trimmed, "%{") == 0) || (strcmp(trimmed, "%}") == 0))// || trimmed[0] == '/' || trimmed[0] == '#')
             {
                 continue;
+            }
+            if (!inside_mini_section)
+            {
+                fprintf(stderr, "%s:%d: unrecognized '%c' directive\n", g_filename, line_num, line[0]);
+                exit(EXIT_FAILURE);
             }
 
             LexRule *rule = malloc(sizeof(LexRule));

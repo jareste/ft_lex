@@ -2,7 +2,7 @@
 #include <stdio.h>
 
 #include <string.h>
-%deff i
+%deff
 %}
 DIGIT [0-9]
 
