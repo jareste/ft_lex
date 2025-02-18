@@ -1,0 +1,3 @@
+%optin case-insensitive
+%%
+. ;

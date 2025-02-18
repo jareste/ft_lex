@@ -12,18 +12,18 @@ int ft_list_add_last(void** _head, void* _node)
 
     if (!*head)
     {
-        *head = node;
         node->next = node;
         node->prev = node;
-        return (OK);
+        *head = node;
     }
-
-    last = (*head)->prev;
-    last->next = node;
-    node->prev = last;
-    node->next = *head;
-    (*head)->prev = node;
-    
+    else
+    {
+        last = (*head)->prev;
+        last->next = node;
+        node->prev = last;
+        node->next = *head;
+        (*head)->prev = node;
+    }
     return (OK);
 }
 

@@ -1,0 +1,6 @@
+%{
+#define ECHO "test"
+%}
+r
+%%
+. ;

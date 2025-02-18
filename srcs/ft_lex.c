@@ -14,7 +14,8 @@ int main(int argc, char** argv)
     }
     else
     {
-        printf("File is not a valid lex file\n");
+        // printf("File is not a valid lex file\n");
+        return 1;
     }
-
+    return 0;
 }

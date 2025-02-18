@@ -2,9 +2,11 @@
 #include <stdio.h>
 
 #include <string.h>
-%deff
 %}
+%deff
+/* Comment */
 DIGIT [0-9]
+d [a-z]
 
 %{
 %}

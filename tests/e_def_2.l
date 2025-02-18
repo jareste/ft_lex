@@ -1,0 +1,3 @@
+%option invalid_option
+%%
+. ;

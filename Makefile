@@ -3,10 +3,10 @@ NAME = ft_lex
 #########
 RM = rm -rf
 CC = cc
-# CFLAGS = -O3 -march=native -flto -funroll-loops -fomit-frame-pointer -Wall -Wextra -Werror -g -fsanitize=address -fsanitize=undefined -fsanitize=leak -fsanitize=pointer-subtract -fsanitize=pointer-compare
+CFLAGS = -O3 -march=native -flto -funroll-loops -fomit-frame-pointer -Wall -Wextra -Werror #-g -fsanitize=address -fsanitize=undefined -fsanitize=leak -fsanitize=pointer-subtract -fsanitize=pointer-compare
 # CFLAGS = -Wall -Wextra -Werror -O3 #-march=native -flto -funroll-loops -fomit-frame-pointer #-g -fsanitize=address -fsanitize=undefined -fsanitize=leak -fsanitize=pointer-subtract -fsanitize=pointer-compare
-CFLAGS = -Wall -Wextra -Werror -O3 -march=native -flto -funroll-loops -fomit-frame-pointer \
-         -falign-functions=16 -fno-strict-aliasing -ftree-vectorize
+# CFLAGS = -Wall -Wextra -Werror -O3 -march=native -flto -funroll-loops -fomit-frame-pointer \
+#          -falign-functions=16 -fno-strict-aliasing -ftree-vectorize
 LDFLAGS = -lm -lpthread
 RELEASE_CFLAGS = $(CFLAGS) -DNDEBUG
 #########
@@ -66,6 +66,9 @@ fclean: clean
 
 re:	fclean all
 
-.PHONY: all clean fclean re release .gitignore
+test: all
+	./check.sh
+
+.PHONY: all clean fclean re release .gitignore test
 
 -include $(DEP)
