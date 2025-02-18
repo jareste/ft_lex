@@ -156,101 +156,236 @@ char* find_start_expansion(char* line)
     return NULL;
 }
 
+char *find_matching_brace(char *start)
+{
+    if (*start != '{')
+        return NULL;
+    int brace = 0;
+    char *p = start;
+    while (*p)
+    {
+        if (*p == '{')
+            brace++;
+        else if (*p == '}')
+        {
+            brace--;
+            if (brace == 0)
+                return p;
+        }
+        p++;
+    }
+    return NULL;
+}
+
 void get_rules_section(FILE *fp)
 {
     char line[MAX_LINE_LENGTH];
-    int action_buffer_size = 4096; /* Lets assume an action must be below 4096 bytes */
-    char action_buffer[action_buffer_size]; /* TODO use malloc instead of VLA */
-    char *trimmed;
-    char *action_start = NULL;
-    char *pattern = NULL;
-
+    char rule_buffer[8192] = "";
+    
     while (fgets(line, MAX_LINE_LENGTH, fp))
     {
         line_num++;
-
         if (is_delimiter_line(line))
             break;
-
-        trimmed = trim(line);
+        
+        char *trimmed = trim(line);
         if (*trimmed == '\0')
             continue;
-
-        /* Reset used pointers */
-        action_start = NULL;
-        pattern = NULL;
-        action_buffer[0] = '\0';
-
-        if (*trimmed != '{')  /* Normal case: pattern and action on one line? */
+        
+        if (strlen(rule_buffer) > 0)
+            strcat(rule_buffer, " ");
+        strcat(rule_buffer, trimmed);
+        
+        /* If the current trimmed line ends with a '|' then we expect more alternatives.
+         * Remove the trailing '|' and continue accumulating.
+         */
+        int len = strlen(trimmed);
+        if (len > 0 && trimmed[len - 1] == '|')
         {
-            /* Find the start of the action */
-            action_start = strchr(trimmed, '{');
-            if (!action_start)
+            rule_buffer[strlen(rule_buffer) - 1] = '\0';
+            continue;
+        }
+        
+        /* Check if the rule is complete.
+         * If a block action is present (detected by a '{'), count the braces.
+         * Only when they balance (brace_count==0) do we consider the rule complete.
+         * Otherwise, if there’s a semicolon or comment marker, we assume it’s complete.
+         */
+        int complete = 0;
+        char *first_brace = strchr(rule_buffer, '{');
+        if (first_brace)
+        {
+            int brace_count = 0;
+            for (char *p = first_brace; *p; p++)
             {
-                if (strchr(trimmed, ';'))
-                    action_start = strchr(trimmed, ';');
-                else
-                {
-                    fprintf(stderr, "%s:%d: missing action '{' in rule: %s\n",
-                            g_filename, line_num, trimmed);
-                    exit(EXIT_FAILURE);
-                }
+                if (*p == '{')
+                    brace_count++;
+                else if (*p == '}')
+                    brace_count--;
             }
+            if (brace_count != 0)
+                continue;  /* still in a multiline action */
+            complete = 1;
+        }
+        else if (strchr(rule_buffer, ';'))
+        {
+            complete = 1;
+        }
+        else if (strstr(rule_buffer, "//") || strstr(rule_buffer, "/*"))
+        {
+            complete = 1;
         }
         else
         {
-            /* If the line starts with '{', you might have a helper like find_start_expansion */
-            action_start = find_start_expansion(trimmed);
+            complete = 1;  /* default to complete */
         }
-
-        *action_start = '\0';
-        pattern = strdup(trim(trimmed));
-
-        char *action_part = action_start + 1;
-        char *end_brace = strchr(action_part, '}');
-        if (end_brace)
+        
+        if (!complete)
+            continue;
+        
+        /* Now rule_buffer holds a complete rule.
+         * We need to split it into its components.
+         * If the rule starts with a macro expansion (i.e. first character is '{'),
+         * then extract the macro’s contents as the rule name.
+         */
+        if (rule_buffer[0] == '{')
         {
-            /* Single-line action: remove the closing brace */
-            *end_brace = '\0';
-            strncpy(action_buffer, action_part, action_buffer_size - 1);
+            /* Find the matching closing brace for the macro expansion */
+            char *macro_end = find_matching_brace(rule_buffer);
+            if (!macro_end)
+            {
+                fprintf(stderr, "%s:%d: missing closing '}' for macro in rule: %s\n",
+                        g_filename, line_num, rule_buffer);
+                exit(EXIT_FAILURE);
+            }
+            
+            int macro_name_len = macro_end - rule_buffer + 1;
+            char *macro_name = malloc(macro_name_len + 1);
+            strncpy(macro_name, rule_buffer, macro_name_len);
+            macro_name[macro_name_len] = '\0';
+            
+            /* After the macro expansion, there may be additional regex text.
+             * In many lex implementations the regular expression is not multiline;
+             * so we assume here that the remainder (if any) is not needed.
+             * We now look for the action delimiter.
+             */
+            char *after_macro = trim(macro_end + 1);
+            /* Look for the start of the action block: a '{' (or a semicolon/comment) */
+            char *action_delim = strchr(after_macro, '{');
+            if (!action_delim)
+                action_delim = strchr(after_macro, ';');
+            if (!action_delim)
+            {
+                char *comment = strstr(after_macro, "//");
+                if (!comment)
+                    comment = strstr(after_macro, "/*");
+                action_delim = comment;
+            }
+            if (!action_delim)
+            {
+                fprintf(stderr, "%s:%d: missing action delimiter in rule: %s\n", 
+                        g_filename, line_num, rule_buffer);
+                exit(EXIT_FAILURE);
+            }
+            
+            /* Extract the action.
+             * If the delimiter is '{', then we have a block action.
+             */
+            char *action = NULL;
+            if (*action_delim == '{')
+            {
+                action = strdup(trim(action_delim + 1));
+                /* Remove trailing '}' from the action, if present */
+                char *end_brace = strrchr(action, '}');
+                if (end_brace)
+                    *end_brace = '\0';
+            }
+            else
+            {
+                /* If the delimiter is a semicolon or comment, assume an empty action */
+                *action_delim = '\0';
+                action = strdup("");
+            }
+            
+            /* Create the rule using the macro content as the name.
+             * (Here, rule->name stores the macro expansion; rule->pattern stores the action.)
+             */
+            LexRule *rule = malloc(sizeof(LexRule));
+            rule->name = macro_name;
+            rule->pattern = action;
+            rule->line_num = line_num;
+            FT_LIST_ADD_LAST(&g_rules_2, rule);
         }
         else
         {
-            /* Multiline action: start with the remainder of the current line */
-            strncpy(action_buffer, action_part, action_buffer_size - 1);
-
-            while (fgets(line, MAX_LINE_LENGTH, fp))
+            /* Normal rule that does not start with a macro expansion.
+             * Split at the first '{' (or semicolon/comment) to separate pattern and action.
+             */
+            char *action_start = strchr(rule_buffer, '{');
+            if (action_start)
             {
-                line_num++;
-                char *line_end = strchr(line, '}');
-                if (line_end)
+                *action_start = '\0';
+                char *pattern = strdup(trim(rule_buffer));
+                char *action = strdup(trim(action_start + 1));
+                char *end_brace = strrchr(action, '}');
+                if (end_brace)
+                    *end_brace = '\0';
+                LexRule *rule = malloc(sizeof(LexRule));
+                rule->name = pattern;
+                rule->pattern = action;
+                rule->line_num = line_num;
+                FT_LIST_ADD_LAST(&g_rules_2, rule);
+            }
+            else
+            {
+                char *semi = strchr(rule_buffer, ';');
+                if (!semi)
                 {
-                    size_t current_len = strlen(action_buffer);
-                    strncat(action_buffer, "\n", action_buffer_size - current_len - 1);
-                    current_len = strlen(action_buffer);
-                    size_t num_to_copy = line_end - line;
-                    if (num_to_copy > action_buffer_size - current_len - 1)
-                        num_to_copy = action_buffer_size - current_len - 1;
-                    strncat(action_buffer, line, num_to_copy);
-
-                    break;
+                    char *comment = strstr(rule_buffer, "//");
+                    if (!comment)
+                        comment = strstr(rule_buffer, "/*");
+                    if (comment)
+                    {
+                        *comment = '\0';
+                        char *pattern = strdup(trim(rule_buffer));
+                        char *action = strdup("");
+                        LexRule *rule = malloc(sizeof(LexRule));
+                        rule->name = pattern;
+                        rule->pattern = action;
+                        rule->line_num = line_num;
+                        FT_LIST_ADD_LAST(&g_rules_2, rule);
+                    }
+                    else
+                    {
+                        fprintf(stderr, "%s:%d: missing action delimiter in rule: %s\n", 
+                                g_filename, line_num, rule_buffer);
+                        exit(EXIT_FAILURE);
+                    }
                 }
                 else
                 {
-                    size_t current_len = strlen(action_buffer);
-                    strncat(action_buffer, "\n", action_buffer_size - current_len - 1);
-                    current_len = strlen(action_buffer);
-                    strncat(action_buffer, line, action_buffer_size - current_len - 1);
+                    *semi = '\0';
+                    char *p = rule_buffer;
+                    while (*p && !isspace((unsigned char)*p))
+                        p++;
+                    if (*p)
+                    {
+                        *p = '\0';
+                        p++;
+                    }
+                    char *pattern = strdup(trim(rule_buffer));
+                    char *action = strdup(trim(p));
+                    LexRule *rule = malloc(sizeof(LexRule));
+                    rule->name = pattern;
+                    rule->pattern = action;
+                    rule->line_num = line_num;
+                    FT_LIST_ADD_LAST(&g_rules_2, rule);
                 }
             }
         }
-
-        LexRule *rule = malloc(sizeof(LexRule));
-        rule->name = strdup(pattern);
-        rule->pattern = strdup(action_buffer);
-        rule->line_num = line_num;
-        free(pattern);
-        FT_LIST_ADD_LAST(&g_rules_2, rule);
+        
+        /* Clear rule_buffer for the next rule */
+        rule_buffer[0] = '\0';
     }
 }
 
