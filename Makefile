@@ -54,6 +54,7 @@ clean:
 		echo "$(NAME)" >> .gitignore; \
 		echo "lex.yy.c" >> .gitignore; \
 		echo "$(OBJ_DIR)/" >> .gitignore; \
+		echo "results/" >> .gitignore; \
 		echo ".gitignore created and updated with entries."; \
 	else \
 		echo ".gitignore already exists."; \

@@ -2,8 +2,8 @@
 #include <stdio.h>
 
 #include <string.h>
+//%deff
 %}
-%deff
 /* Comment */
 DIGIT [0-9]
 d [a-z]
@@ -12,7 +12,9 @@ d [a-z]
 %}
 %%
 
-{DIGIT}+        { printf("NUMBER: %s\n", yytext); }
+{DIGIT}+        {
+printf("NUMBER: %s\n", yytext);
+}
 [a-zA-Z]+       { printf("WORD: %s\n", yytext); }
 \n              { printf("NEWLINE\n"); }
 [ \t]+          ;  /* Ignore whitespace */

@@ -13,7 +13,6 @@ static LexRule *g_rules = NULL;
 static LexRule *g_rules_2 = NULL;
 
 static int inside_mini_section = 0; // for now only being used for section 1
-static int inside_rules_section = 0;
 
 char *trim(char *str)
 {
@@ -157,10 +156,112 @@ char* find_start_expansion(char* line)
     return NULL;
 }
 
+void get_rules_section(FILE *fp)
+{
+    char line[MAX_LINE_LENGTH];
+    int action_buffer_size = 4096; /* Lets assume an action must be below 4096 bytes */
+    char action_buffer[action_buffer_size]; /* TODO use malloc instead of VLA */
+    char *trimmed;
+    char *action_start = NULL;
+    char *pattern = NULL;
+
+    while (fgets(line, MAX_LINE_LENGTH, fp))
+    {
+        line_num++;
+
+        if (is_delimiter_line(line))
+            break;
+
+        trimmed = trim(line);
+        if (*trimmed == '\0')
+            continue;
+
+        /* Reset used pointers */
+        action_start = NULL;
+        pattern = NULL;
+        action_buffer[0] = '\0';
+
+        if (*trimmed != '{')  /* Normal case: pattern and action on one line? */
+        {
+            /* Find the start of the action */
+            action_start = strchr(trimmed, '{');
+            if (!action_start)
+            {
+                if (strchr(trimmed, ';'))
+                    action_start = strchr(trimmed, ';');
+                else
+                {
+                    fprintf(stderr, "%s:%d: missing action '{' in rule: %s\n",
+                            g_filename, line_num, trimmed);
+                    exit(EXIT_FAILURE);
+                }
+            }
+        }
+        else
+        {
+            /* If the line starts with '{', you might have a helper like find_start_expansion */
+            action_start = find_start_expansion(trimmed);
+        }
+
+        *action_start = '\0';
+        pattern = strdup(trim(trimmed));
+
+        char *action_part = action_start + 1;
+        char *end_brace = strchr(action_part, '}');
+        if (end_brace)
+        {
+            /* Single-line action: remove the closing brace */
+            *end_brace = '\0';
+            strncpy(action_buffer, action_part, action_buffer_size - 1);
+        }
+        else
+        {
+            /* Multiline action: start with the remainder of the current line */
+            strncpy(action_buffer, action_part, action_buffer_size - 1);
+
+            while (fgets(line, MAX_LINE_LENGTH, fp))
+            {
+                line_num++;
+                char *line_end = strchr(line, '}');
+                if (line_end)
+                {
+                    size_t current_len = strlen(action_buffer);
+                    strncat(action_buffer, "\n", action_buffer_size - current_len - 1);
+                    current_len = strlen(action_buffer);
+                    size_t num_to_copy = line_end - line;
+                    if (num_to_copy > action_buffer_size - current_len - 1)
+                        num_to_copy = action_buffer_size - current_len - 1;
+                    strncat(action_buffer, line, num_to_copy);
+
+                    break;
+                }
+                else
+                {
+                    size_t current_len = strlen(action_buffer);
+                    strncat(action_buffer, "\n", action_buffer_size - current_len - 1);
+                    current_len = strlen(action_buffer);
+                    strncat(action_buffer, line, action_buffer_size - current_len - 1);
+                }
+            }
+        }
+
+        LexRule *rule = malloc(sizeof(LexRule));
+        rule->name = strdup(pattern);
+        rule->pattern = strdup(action_buffer);
+        rule->line_num = line_num;
+        free(pattern);
+        FT_LIST_ADD_LAST(&g_rules_2, rule);
+    }
+}
+
+
 int lex_parser(char* filename)
 {    
-    FILE *fp = fopen(filename, "r");
+    FILE *fp;
     int delimiter_found = 0;
+    char line[MAX_LINE_LENGTH];
+    
+    fp = fopen(filename, "r");
     if (!fp)
     {
         perror("Error opening file");
@@ -176,8 +277,6 @@ int lex_parser(char* filename)
         return EXIT_FAILURE;
     }
 
-    char line[MAX_LINE_LENGTH];
-
     rewind(fp);
     line_num = 0;
     while (fgets(line, MAX_LINE_LENGTH, fp))
@@ -185,10 +284,7 @@ int lex_parser(char* filename)
         line_num++;
         line[strcspn(line, "\n")] = 0;
         if (is_comment_line(line))
-        {
-            printf("Comment: %s\n", line);
             continue;
-        }
         if (is_delimiter_line(line) && !inside_mini_section)
         {
             delimiter_found = 1;
@@ -224,6 +320,7 @@ int lex_parser(char* filename)
             FT_LIST_ADD_LAST(&g_rules, rule);
         }
     }
+    /* should never trigger */
     if (!delimiter_found)
     {
         line_num++;
@@ -232,6 +329,7 @@ int lex_parser(char* filename)
         return EXIT_FAILURE;
     }
 
+    /* ------------------------------DEBUG------------------------------ */
     LexMacro *m;
     m = FT_LIST_GET_FIRST(&g_macros);
     while (m)
@@ -248,75 +346,13 @@ int lex_parser(char* filename)
         r = FT_LIST_GET_NEXT(&g_rules, r);
     }
 
-    rewind(fp);
-    line_num = 0;
-    while (fgets(line, MAX_LINE_LENGTH, fp))
-    {
-        line_num++;
+    // rewind(fp);
+    // line_num = 0;
+    /* ------------------------------DEBUGEND------------------------------ */
 
-        if (is_comment_line(line)) continue;
+    get_rules_section(fp);
 
-        if (is_delimiter_line(line))
-        {
-            if (inside_rules_section) break;
-            inside_rules_section = 1;
-            continue;
-        }
-
-        if (!inside_rules_section) continue;
-
-        // --- Now we are inside the rules section ---
-
-        char *trimmed = trim(line);
-        char *action = NULL;
-        char *action_start = NULL;
-        char *pattern = NULL;
-        if (*trimmed == '\0') continue;
-
-        if (*trimmed != '{')
-        {
-            action_start = strchr(trimmed, '{');
-            if (!action_start)
-            {
-                if (strchr(trimmed, ';'))
-                {
-                    action_start = strchr(trimmed, ';');
-                    *action_start = '\0';
-                    trimmed = trim(trimmed);
-                    action = strdup(trimmed);
-                    pattern = strdup(action_start + 1);
-                }
-                else
-                {
-                    fprintf(stderr, "%s:%d: missing action '{' in rule: %s\n", g_filename, line_num, trimmed);
-                    exit(EXIT_FAILURE);
-                }
-            }
-        }
-        else
-        {
-            action_start = find_start_expansion(trimmed);
-            *action_start = '\0';
-            trimmed = trim(trimmed);
-            action = strdup(action_start + 1);
-            pattern = strdup(trimmed);
-        }
-
-        *action_start = '\0';
-        if (!action)
-        {    
-            pattern = strdup(trim(trimmed));
-            action = strdup(trim(action_start + 1));
-        }
-        LexRule *rule = malloc(sizeof(LexRule));
-        rule->name = strdup(pattern);
-        rule->pattern = strdup(action);
-        rule->line_num = line_num;
-        free(action);
-        free(pattern);
-        FT_LIST_ADD_LAST(&g_rules_2, rule);
-    }
-
+    /* ------------------------------DEBUG------------------------------ */
     printf("fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo\n");
     r = g_rules_2;
     while (r)
@@ -324,6 +360,7 @@ int lex_parser(char* filename)
         printf("Rule: '%s' -> '%s'\n", r->name, r->pattern);
         r = FT_LIST_GET_NEXT(&g_rules_2, r);
     }
+    /* ------------------------------DEBUGEND------------------------------ */
 
     fclose(fp);
     return EXIT_SUCCESS;
