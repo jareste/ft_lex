@@ -54,7 +54,7 @@ LexMacro *parse_macro_line(const char *line)
         free(buf);
         return NULL;
     }
-    else if (!isalpha((unsigned char)trimmed[0]))
+    else if ((inside_mini_section == 0) && !isalpha((unsigned char)trimmed[0]))
     {
         // for (int i = 0; trimmed[i]; i++)
         // {
@@ -108,7 +108,8 @@ int is_comment_line(const char *line)
     {
         line++;
     }
-    return (*line == '/' && *(line + 1) == '/') || (*line == '/' && *(line + 1) == '*');
+    return ((*line == '/') && (*(line + 1) == '/') && (inside_mini_section))\
+            || ((*line == '/') && (*(line + 1) == '*'));
 }
 
 int has_delimiter_line(FILE *fp)
@@ -182,8 +183,10 @@ int lex_parser(char* filename)
     while (fgets(line, MAX_LINE_LENGTH, fp))
     {
         line_num++;
+        line[strcspn(line, "\n")] = 0;
         if (is_comment_line(line))
         {
+            printf("Comment: %s\n", line);
             continue;
         }
         if (is_delimiter_line(line) && !inside_mini_section)
@@ -201,12 +204,16 @@ int lex_parser(char* filename)
         {
             char* trimmed = trim(line);
             if ((*trimmed == '\0') || (strcmp(trimmed, "%{") == 0) || (strcmp(trimmed, "%}") == 0))// || trimmed[0] == '/' || trimmed[0] == '#')
+            // if ((line[0] == '\0') || (strcmp(line, "%{") == 0) || (strcmp(line, "%}") == 0))
             {
                 continue;
             }
             if (!inside_mini_section)
             {
-                fprintf(stderr, "%s:%d: unrecognized '%c' directive\n", g_filename, line_num, line[0]);
+                if (trimmed[0] == line[0])
+                    fprintf(stderr, "%s:%d: unrecognized '%c' directive\n", g_filename, line_num, line[0]);
+                else
+                    fprintf(stderr, "%s:%d: bad character: '%c'\n", g_filename, line_num, trimmed[0]);
                 exit(EXIT_FAILURE);
             }
 
@@ -249,13 +256,14 @@ int lex_parser(char* filename)
 
         if (is_comment_line(line)) continue;
 
-        if (is_delimiter_line(line)) {  // Found "%%"
-            if (inside_rules_section) break;  // End of rules section
+        if (is_delimiter_line(line))
+        {
+            if (inside_rules_section) break;
             inside_rules_section = 1;
             continue;
         }
 
-        if (!inside_rules_section) continue;  // Ignore lines before "%%"
+        if (!inside_rules_section) continue;
 
         // --- Now we are inside the rules section ---
 
@@ -263,7 +271,7 @@ int lex_parser(char* filename)
         char *action = NULL;
         char *action_start = NULL;
         char *pattern = NULL;
-        if (*trimmed == '\0') continue;  // Ignore empty lines
+        if (*trimmed == '\0') continue;
 
         if (*trimmed != '{')
         {
